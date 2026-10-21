@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#050b18">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg">
+<title>JARVIS</title>
+<style>
+:root{--bg:#050b18;--panel:#0b1630;--line:#173060;--blue:#2f8cff;--glow:#7cc4ff;--text:#e6f1ff;--mut:#8aa4c8}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{background:radial-gradient(circle at 50% 0,#0a1d44,var(--bg) 60%);color:var(--text);font:16px/1.5 system-ui,sans-serif;display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+header{display:flex;justify-content:space-between;align-items:center;padding:10px 16px}
+h1{font-size:18px;letter-spacing:.3em;color:var(--glow);text-shadow:0 0 12px var(--blue)}
+button,select{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 14px;min-height:44px;cursor:pointer}
+button:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--glow)}
+#stage{display:flex;flex-direction:column;align-items:center;padding:6px 0}
+#orb{width:120px;height:120px;border-radius:50%;border:2px solid var(--blue);background:radial-gradient(circle,var(--glow) 0,var(--blue) 25%,transparent 70%);box-shadow:0 0 30px var(--blue),inset 0 0 30px #2f8cff66;animation:idle 3.5s ease-in-out infinite;padding:0}
+#orb.listening{animation:pulse 1s ease-in-out infinite;border-color:#4dffb5;box-shadow:0 0 40px #4dffb5}
+#orb.thinking{animation:spin 1.2s linear infinite;border-style:dashed}
+#orb.speaking{animation:pulse .6s ease-in-out infinite}
+@keyframes idle{50%{transform:scale(1.05);box-shadow:0 0 45px var(--blue)}}
+@keyframes pulse{50%{transform:scale(1.15)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){#orb{animation:none!important}}
+#status{color:var(--mut);font-size:14px;min-height:22px;margin-top:8px}
+#log{flex:1;overflow-y:auto;padding:8px 14px;display:flex;flex-direction:column;gap:10px}
+.m{max-width:88%;padding:10px 14px;border-radius:16px;white-space:pre-wrap;overflow-wrap:anywhere}
+.u{align-self:flex-end;background:#12306a;border:1px solid var(--blue)}
+.a{align-self:flex-start;background:var(--panel);border:1px solid var(--line)}
+.e{align-self:center;color:#ff9b9b;border:1px solid #7a2b2b;background:#2a0d0d}
+#welcome{text-align:center;color:var(--mut)}
+#welcome h2{color:var(--text);font-size:20px;margin-bottom:4px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:12px}
+form{display:flex;gap:8px;padding:10px 12px}
+textarea{flex:1;resize:none;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:10px 12px;font:inherit;max-height:120px}
+#mic.on{background:#0f5a3c;border-color:#4dffb5}
+#send{background:var(--blue);border-color:var(--blue)}
+dialog{background:var(--panel);color:var(--text);border:1px solid var(--blue);border-radius:16px;padding:18px;width:min(92vw,380px)}
+dialog::backdrop{background:#000a}
+dialog label,dialog button{display:flex;width:100%;justify-content:space-between;align-items:center;margin:10px 0}
+dialog select{min-width:140px}
+.danger{border-color:#7a2b2b;color:#ff9b9b}
+.typing{opacity:.7;animation:blink 1s infinite}@keyframes blink{50%{opacity:.25}}
+.src{margin-top:8px;font-size:13px;color:var(--mut)}.src a{color:var(--glow);margin-right:6px;display:inline-block;padding:4px 0}
+</style>
+</head>
+<body>
+<header><h1>JARVIS</h1><button id="gear" aria-label="Settings">⚙ Settings</button></header>
+<div id="stage">
+  <button id="orb" aria-label="JARVIS orb. Tap to stop speaking"></button>
+  <div id="status" role="status" aria-live="polite"></div>
+</div>
+<main id="log" aria-live="polite"></main>
+<form id="f">
+  <button type="button" id="mic" aria-label="Voice input">🎤</button>
+  <textarea id="t" rows="1" placeholder="Type or tap the mic… / हिन्दी या English" aria-label="Message"></textarea>
+  <button id="send" aria-label="Send">➤</button>
+</form>
+<dialog id="dlg">
+  <h2>Settings</h2>
+  <label>Spoken replies <input type="checkbox" id="voice" style="width:24px;height:24px"></label>
+  <label id="srow" hidden>Web search (free quota) <input type="checkbox" id="search" style="width:24px;height:24px"></label>
+  <label>Language <select id="lang"><option value="auto">Auto</option><option value="en">English</option><option value="hi">हिन्दी</option></select></label>
+  <small style="color:var(--mut)">Auto: replies match your language; the mic listens in English (India) unless you pick हिन्दी.</small>
+  <button id="clear">Clear chat</button>
+  <button id="wipe" class="danger">Delete all my data on this device</button>
+  <button id="close">Close</button>
+</dialog>
+<script>
+const $ = id => document.getElementById(id);
+const store = { get:(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}}, set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}} };
+let msgs = store.get('jarvis.msgs', []);
+let cfg = Object.assign({ voice:true, lang:'auto' }, store.get('jarvis.cfg', {}));
+let busy = false, rec = null, srv = {};
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const hasDev = s => /[\u0900-\u097F]/.test(s);
+const setState = (s, txt='') => { $('orb').className = s; $('status').textContent = txt; };
+
+function add(role, text){ const d=document.createElement('div'); d.className='m '+role; d.textContent=text; $('log').appendChild(d); $('log').scrollTop=1e9; return d; }
+function render(){
+  $('log').innerHTML='';
+  if(!msgs.length){ const w=document.createElement('div'); w.id='welcome';
+    w.innerHTML='<h2>Welcome. I am JARVIS.</h2><p>नमस्ते! Ask me anything in Hindi or English.</p><div class="chips"></div>';
+    [['Explain AI in simple Hindi','सरल हिंदी में AI समझाओ'],['Make a 7-day study plan','Make a 7-day study plan for learning English'],['Draft a note','Draft a short note asking my teacher for leave']]
+      .forEach(([l,p])=>{ const b=document.createElement('button'); b.textContent=l; b.onclick=()=>send(p); w.querySelector('.chips').appendChild(b); });
+    $('log').appendChild(w); }
+  msgs.forEach(m=>{ const el=add(m.role==='user'?'u':'a', m.content);
+    if(m.sources&&m.sources.length){ const s=document.createElement('div'); s.className='src'; s.append('Sources: ');
+      m.sources.forEach((x,i)=>{ if(!/^https?:\/\//.test(x.url)) return; const a=document.createElement('a'); a.href=x.url; a.target='_blank'; a.rel='noopener noreferrer'; a.textContent='['+(i+1)+'] '+(x.title||x.url).slice(0,50); s.append(a,' '); });
+      el.appendChild(s); } });
+}
+const save = () => store.set('jarvis.msgs', msgs.slice(-60));
+
+function speak(text){
+  if(!cfg.voice || !('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const clean = text.replace(/[*_`#>]/g,'');
+  const u = new SpeechSynthesisUtterance(clean);
+  u.lang = hasDev(clean) ? 'hi-IN' : (cfg.lang==='hi' ? 'hi-IN' : 'en-IN');
+  const v = speechSynthesis.getVoices().find(v=>v.lang.replace('_','-')===u.lang) || speechSynthesis.getVoices().find(v=>v.lang.startsWith(u.lang.slice(0,2)));
+  if(v) u.voice = v;
+  u.onstart = ()=>setState('speaking','Speaking… tap the orb to stop');
+  u.onend = u.onerror = ()=>setState('');
+  speechSynthesis.speak(u);
+}
+
+async function send(text){
+  text = (text||'').trim(); if(!text || busy) return;
+  if(text.length>4000) return add('e','Message too long (max 4000 characters).');
+  speechSynthesis?.cancel(); busy=true; $('send').disabled=true;
+  msgs.push({role:'user',content:text}); save(); render(); $('t').value='';
+  setState('thinking','Thinking…'); const tip=add('a','Thinking…'); tip.classList.add('typing');
+  try{
+    let ctx = msgs.slice(-20); while(ctx.length && ctx[0].role!=='user') ctx.shift();
+    const r = await fetch('/api/chat',{method:'POST',headers:{'content-type':'application/json','x-access-code':store.get('jarvis.code','')},body:JSON.stringify({messages:ctx.map(({role,content})=>({role,content})),search:!!(cfg.search&&srv.search)})});
+    const d = await r.json().catch(()=>({}));
+    if(r.status===401){ const c=prompt('Enter access code'); if(c){store.set('jarvis.code',c);} throw new Error(c?'Access code saved. Tap send again.':(d.error||'Access code required.')); }
+    if(!r.ok) throw new Error(d.error||'Request failed.');
+    msgs.push({role:'assistant',content:d.reply,sources:d.sources||[]}); save(); render(); if(d.notice) add('e',d.notice); setState(''); speak(d.reply);
+  }catch(e){ msgs.pop(); save(); render(); $('t').value=text; add('e', e.message||'Network error. Check your internet.'); setState(''); }
+  finally{ busy=false; $('send').disabled=false; }
+}
+
+function mic(){
+  if(rec){ rec.stop(); return; }
+  speechSynthesis?.cancel();
+  rec = new SR(); rec.lang = cfg.lang==='hi' ? 'hi-IN' : 'en-IN'; rec.interimResults = true;
+  let finalT = '';
+  rec.onstart = ()=>{ $('mic').classList.add('on'); setState('listening','Listening…'); };
+  rec.onresult = e => { let t=''; for(const r of e.results){ t+=r[0].transcript; if(r.isFinal) finalT=t; } $('t').value=t; };
+  rec.onerror = e => { const m={'not-allowed':'Microphone permission denied. Allow it in browser site settings, or type instead.','no-speech':'I did not hear anything.','network':'Speech service needs an internet connection.'}; add('e', m[e.error]||('Voice error: '+e.error)); };
+  rec.onend = ()=>{ rec=null; $('mic').classList.remove('on'); setState(''); if(finalT) send(finalT); };
+  rec.start();
+}
+
+$('f').onsubmit = e => { e.preventDefault(); send($('t').value); };
+$('t').onkeydown = e => { if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send($('t').value); } };
+$('orb').onclick = () => { speechSynthesis?.cancel(); setState(''); };
+if(SR) $('mic').onclick = mic; else { $('mic').hidden = true; $('t').placeholder='Voice input not supported here — type your message'; }
+$('gear').onclick = () => { $('voice').checked=cfg.voice; $('search').checked=!!cfg.search; $('srow').hidden=!srv.search; $('lang').value=cfg.lang; $('dlg').showModal(); };
+$('voice').onchange = () => { cfg.voice=$('voice').checked; store.set('jarvis.cfg',cfg); if(!cfg.voice) speechSynthesis?.cancel(); };
+$('search').onchange = () => { cfg.search=$('search').checked; store.set('jarvis.cfg',cfg); };
+$('lang').onchange = () => { cfg.lang=$('lang').value; store.set('jarvis.cfg',cfg); };
+$('clear').onclick = () => { msgs=[]; save(); render(); $('dlg').close(); };
+$('wipe').onclick = () => { if(confirm('Delete chat, settings and access code from this device?')){ localStorage.clear(); msgs=[]; cfg={voice:true,lang:'auto'}; render(); $('dlg').close(); } };
+$('close').onclick = () => $('dlg').close();
+speechSynthesis?.getVoices();
+fetch('/api/status').then(r=>r.json()).then(s=>{ srv=s; if(!s.configured) add('e','Server has no AI key set. See README.'); }).catch(()=>{});
+if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
+render();
+</script>
+</body>
+</html>
